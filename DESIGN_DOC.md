@@ -146,3 +146,18 @@ Once a solution is proposed and passes, or the run ends without one (see [Limits
 
 - Implemented in Rust
 - Tracked with git
+
+## Future idea: Jev as a first-pass judge
+
+[Jev](https://docs.typesafe.ai) is a hosted decision model that answers closed questions with probabilities instead of writing text. It could screen runs cheaply before the LLM judge:
+
+1. Ask Jev closed questions about the run, such as whether the agent tried to read files outside `/problem` and `/scratch`, and record the probabilities.
+2. If any probability is above a threshold, or the call fails, ask the LLM judge for a written reason. A run that Jev flags stays flagged whatever the LLM judge says.
+
+As with the LLM judge, this would only flag runs for review and never decide whether a proposal passes.
+
+Before relying on it:
+
+- Run both judges on every run, including deliberately cheating ones, to choose the threshold. Anything Jev misses would not reach the LLM judge. It has been [reported](https://www.alphaxiv.org/abs/2609.26550.md) to be weaker than LLM judges on code, and we found no results on reward hacking, formal proofs, or prompt injection.
+- Decide what may be sent. Logs go to a third party and can quote hidden dependency code.
+- Check its context limit, since logs can be long.
