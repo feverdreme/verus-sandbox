@@ -3,7 +3,7 @@
 
 Needs the vsb:local image and a running Docker. Makes no model calls.
 """
-import json, os, pathlib, re, shutil, subprocess, sys, tempfile
+import json, os, pathlib, re, shutil, subprocess, sys, tarfile, tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 VSB = ROOT / "target/debug/vsb"
@@ -48,6 +48,9 @@ def run(experiment, calls, config=None, tools=("mcp__vsb__scan",)):
         out = json.loads((tmp / "out.json").read_text()) if (tmp / "out.json").exists() else []
         log = (runs[0] / "log.jsonl").read_text() if (runs[0] / "log.jsonl").exists() else ""
         saved = {f.name for f in runs[0].iterdir()}
+        if "log.jsonl" in saved:
+            names = tarfile.open(runs[0] / "scratch.tar").getnames()
+            assert "./task.rs" in names, (names, p.stderr)
         assert (p.returncode == 0) == (result["status"] == "solved"), (p.returncode, result)
         return result, out[1:], log, saved
 

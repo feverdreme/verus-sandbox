@@ -144,7 +144,9 @@ impl Container {
     /// The archive comes from the agent, so it is stored and never extracted here.
     fn save_scratch(&self, to: &Path) -> Result<()> {
         let status = Command::new("docker")
-            .args(["exec", &self.0, "tar", "-C", "/scratch", "-cf", "-", "."])
+            .args([
+                "exec", "-u", "1001", &self.0, "tar", "-C", "/scratch", "-cf", "-", ".",
+            ])
             .stdout(File::create(to)?)
             .stderr(Stdio::null())
             .status()?;
