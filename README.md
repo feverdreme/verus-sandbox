@@ -1,4 +1,4 @@
-# Verus Sandbox 2
+# Verus Sandbox
 
 Runs an agent on a Verus proof task with only the sandbox's MCP tools. See [DESIGN_DOC.md](DESIGN_DOC.md) for why.
 
