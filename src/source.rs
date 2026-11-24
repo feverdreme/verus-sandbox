@@ -352,9 +352,10 @@ pub proof fn lemma(x: int)
     ensures x >= 1,
     decreases x,
 { assert(x >= 1); }
-pub broadcast proof fn blemma(x: int) -> (r: int)
-    ensures r == x, #[trigger] shown(x) == shown(x),
-{ x }
+pub broadcast proof fn blemma(x: int)
+    ensures #[trigger] shown(x) == shown(x),
+{ }
+pub proof fn rlemma(x: int) -> (r: int) ensures r == x { x }
 pub fn exec(x: u64) -> (r: u64) ensures r == x { x }
 spec fn secret(x: int) -> bool { x == 42 }
 pub struct S { pub a: u64 }
@@ -375,7 +376,7 @@ impl T { spec fn gone(self) -> bool { true } }
     }
 
     const PUBLIC: &[&str] = &["shown", "S", "S::m"];
-    const INTERFACE: &[&str] = &["iface", "lemma", "blemma", "exec", "S::n"];
+    const INTERFACE: &[&str] = &["iface", "lemma", "blemma", "rlemma", "exec", "S::n"];
 
     fn error(task: &str, deps: &str, public: &[&str], interface: &[&str]) -> String {
         format!("{:#}", Index::build(&experiment(task, deps, public, interface)).err().expect("should fail"))
