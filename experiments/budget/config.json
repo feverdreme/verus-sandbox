@@ -1,0 +1,7 @@
+{
+  "name": "budget",
+  "description": "Prove a claim about an abstract predicate whose definition is hidden, using only the interfaces of its lemmas.",
+  "interface_only": ["affordable", "lemma_zero_affordable", "lemma_affordable_add"],
+  "limits": { "experiment_timeout_secs": 900, "max_cost_usd": 1.0, "max_proposals": 5 },
+  "metadata": { "kind": "interface-only proof" }
+}

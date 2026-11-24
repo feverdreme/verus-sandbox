@@ -1,0 +1,8 @@
+{
+  "name": "triangle",
+  "description": "Finish a loop that computes triangular numbers without overflow, by supplying its invariant and body. One helper lemma is visible only as an interface.",
+  "public": ["triangle"],
+  "interface_only": ["lemma_triangle_monotonic"],
+  "limits": { "experiment_timeout_secs": 900, "max_cost_usd": 1.0, "max_proposals": 5 },
+  "metadata": { "kind": "loop invariant" }
+}

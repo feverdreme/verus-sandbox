@@ -36,7 +36,7 @@ pub fn lookup(query: &str) -> Result<String> {
         ])
         .arg(pattern)
         .args([
-            "/opt/verus/vstd",
+            "/opt/docs/vstd",
             "/opt/docs/core",
             "/opt/docs/alloc",
             "/opt/docs/std",
@@ -93,10 +93,12 @@ fn definition(text: &str, line: usize) -> String {
         }
         start -= 1;
     }
+    let is_fn = lines[at].split_whitespace().any(|w| w == "fn");
     let mut end = at;
     while end + 1 < lines.len() && end - at < MAX_LINES {
         let l = lines[end].trim();
-        if l.is_empty() || l.ends_with(';') || l == "{" || l == "}" {
+        // A function ends at its body, which is never documentation.
+        if l.is_empty() || l.ends_with(';') || l == "}" || (is_fn && l.ends_with('{')) {
             break;
         }
         end += 1;

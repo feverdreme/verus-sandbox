@@ -159,7 +159,7 @@ pub fn idents(tokens: TokenStream) -> HashSet<String> {
         match token {
             TokenTree::Group(g) => out.extend(idents(g.stream())),
             TokenTree::Ident(i) => {
-                drop(out.insert(i.to_string().trim_start_matches("r#").to_string()))
+                out.insert(i.to_string().trim_start_matches("r#").to_string());
             }
             _ => {}
         }

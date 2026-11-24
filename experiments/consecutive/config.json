@@ -1,0 +1,7 @@
+{
+  "name": "consecutive",
+  "description": "Prove that the product of two consecutive integers is even. Everything in dependencies.rs is visible.",
+  "public": ["is_even", "lemma_even_times"],
+  "limits": { "experiment_timeout_secs": 900, "max_cost_usd": 1.0, "max_proposals": 5 },
+  "metadata": { "kind": "pure proof" }
+}

@@ -73,7 +73,7 @@ fn redact(index: &Index, stderr: &str) -> String {
         if spans.is_empty() && d["message"].as_str().unwrap_or("").starts_with("aborting") {
             continue;
         }
-        if !spans.is_empty() && !spans.iter().any(|s| is_task(s)) {
+        if !spans.is_empty() && !spans.iter().any(is_task) {
             result += "error: [redacted: in dependencies.rs]\n\n";
             continue;
         }
