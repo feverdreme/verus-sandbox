@@ -1,0 +1,15 @@
+[package]
+name = "vsb"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = "1"
+libc = "0.2"
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "3", features = ["json"] }
+verus_syn = { version = "=0.0.0-2026-11-01-0251", features = ["full", "visit", "extra-traits"] }

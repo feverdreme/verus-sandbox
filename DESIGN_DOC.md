@@ -123,6 +123,15 @@ Every experiment is bounded by timeouts and cost limits, set in `config.json`:
 
 Reaching an experiment-wide limit ends the run. A run that ends this way, or because the agent gives up or something crashes, is logged with the reason it ended.
 
+### Agent credentials
+
+The end-user chooses how the agent's model is accessed:
+
+- **API key:** the user puts an API key in a `.env` file, and the sandbox runs its own agent loop against the API.
+- **CLI:** the user allows the sandbox to run their `claude` or `codex` CLI, which uses its existing login.
+
+Either way the model is called from the host. Credentials never enter the container, and the CLI's built-in tools are turned off so that the MCP server's tools are the only ones the agent has.
+
 ## A typical experiment
 
 An experiment would be a directory, for our purposes call it `ex1` that contains the following files:
