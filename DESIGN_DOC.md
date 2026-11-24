@@ -75,8 +75,8 @@ The MCP server will also live on this container.
 Filtering commands cannot enforce visibility: an agent that can run code can read any file its user can read, including through `rustc` or Verus itself (`include!`, `#[path]`, build scripts, proc macros). Isolation is therefore enforced by the operating system:
 
 - Agent commands run as a dedicated user that can write only to the scratch directory and cannot read the hidden source.
-- Agent commands have no network access. `web_search` is served by the MCP server, not by the agent's shell.
-- Verification runs as a different, trusted user, preferably in a separate container that the agent cannot reach.
+- Agent commands have no network access. The container has no network either: `web_search` is served by the host end of the MCP connection.
+- Verification runs as a different, trusted user in the same container, in a directory the agent cannot read. All agent processes are killed when a tool call ends, so none run during verification.
 
 #### Interface stubs
 
@@ -140,7 +140,7 @@ An experiment would be a directory, for our purposes call it `ex1` that contains
 - `src/task.rs` that contains the code that the agent needs to verify
 - `src/dependencies.rs` that contains any dependencies that need to be linked to the `task.rs` for it to compile. This is will visibility control comes in.
 
-Once a solution is proposed and passes, or the run ends without one (see [Limits](#limits)), the outcome gets logged and then the container saves the scratch work, final logs, solution (if there is one), and shuts itself down and whatever tool is calling it exits cleanly. Note that logs should be continuously updated, and it makes sense for the experiment to either be mounted directly so files like logs can be editted directly or it should be copied onto the Docker image.
+Once a solution is proposed and passes, or the run ends without one (see [Limits](#limits)), the outcome gets logged and then the container saves the scratch work, final logs, solution (if there is one), and shuts itself down and whatever tool is calling it exits cleanly. Logs are written continuously on the host, by the host end of the MCP connection. Nothing is mounted: the launcher sends the experiment to the container when it starts and copies the scratch work out when it ends.
 
 ## Technical Details
 
