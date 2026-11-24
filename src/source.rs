@@ -5,7 +5,12 @@ use anyhow::{Context, Result, anyhow, bail, ensure};
 use proc_macro2::{TokenStream, TokenTree};
 use quote::ToTokens;
 use std::{collections::HashSet, ops::Range};
-use verus_syn::{FnMode, ImplItem, Item, Publish, spanned::Spanned};
+use verus_syn::{
+    FnMode, ImplItem, Item, Publish,
+    buffer::Cursor,
+    parse::{Parse, ParseStream, Parser},
+    spanned::Spanned,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Visibility {
@@ -86,17 +91,47 @@ impl Index {
     }
 }
 
-/// Unlike `parse_file`, does not accept a shebang line.
-pub fn parse(source: &str) -> Result<verus_syn::File> {
-    verus_syn::parse_str(source).map_err(|e| anyhow!("line {}: {e}", e.span().start().line))
+/// Parsed items with the exact tokens each came from. The tokens matter because verus_syn does not
+/// print everything it parses: it drops `broadcast`, for example.
+pub struct Parsed<T> {
+    pub attrs: TokenStream,
+    pub items: Vec<(T, TokenStream)>,
+}
+
+pub fn parse(source: &str) -> Result<Parsed<Item>> {
+    split(source.parse().map_err(|e: proc_macro2::LexError| anyhow!("line {}: {e}", e.span().start().line))?)
+}
+
+fn split<T: Parse>(tokens: TokenStream) -> Result<Parsed<T>> {
+    let parser = |input: ParseStream| {
+        // Returns the tokens between `from` and the current position.
+        let since = |mut from: Cursor| {
+            let mut out = TokenStream::new();
+            while from != input.cursor() {
+                let (token, next) = from.token_tree().expect("tokens were just parsed");
+                out.extend([token]);
+                from = next;
+            }
+            out
+        };
+        let start = input.cursor();
+        input.call(verus_syn::Attribute::parse_inner)?;
+        let attrs = since(start);
+        let mut items = vec![];
+        while !input.is_empty() {
+            let start = input.cursor();
+            let item = input.parse::<T>()?;
+            items.push((item, since(start)));
+        }
+        Ok(Parsed { attrs, items })
+    };
+    parser.parse2(tokens).map_err(|e| anyhow!("line {}: {e}", e.span().start().line))
 }
 
 /// The items inside a `verus! { ... }` block, or None for any other item.
-pub fn verus_block(item: &Item) -> Option<Result<verus_syn::File>> {
+pub fn verus_block(item: &Item) -> Option<Result<Parsed<Item>>> {
     match item {
-        Item::Macro(m) if m.mac.path.is_ident("verus") => {
-            Some(verus_syn::parse2(m.mac.tokens.clone()).map_err(|e| anyhow!("line {}: {e}", e.span().start().line)))
-        }
+        Item::Macro(m) if m.mac.path.is_ident("verus") => Some(split(m.mac.tokens.clone())),
         _ => None,
     }
 }
@@ -140,17 +175,17 @@ impl<'a> Builder<'a> {
     }
 
     /// Indexes the file and returns the part of it the agent may see.
-    fn file(&mut self, file: &verus_syn::File) -> Result<String> {
+    fn file(&mut self, file: &Parsed<Item>) -> Result<String> {
         let mut out = String::new();
-        for attr in &file.attrs {
-            out += &format!("{}\n", self.text(attr));
+        if !file.attrs.is_empty() {
+            out += &format!("{}\n", self.text(&file.attrs));
         }
-        for item in &file.items {
+        for (item, tokens) in &file.items {
             if let Some(block) = verus_block(item) {
-                let body: String = block?.items.iter().map(|i| self.item(i)).collect::<Result<_>>()?;
+                let body: String = block?.items.iter().map(|(i, t)| self.item(i, t)).collect::<Result<_>>()?;
                 out += &format!("\nverus! {{\n\n{body}}}\n");
             } else if self.file == File::Task || matches!(item, Item::Use(_)) {
-                out += &self.item(item)?;
+                out += &self.item(item, tokens)?;
             } else {
                 bail!("line {}: only `use` may appear outside verus!", item.span().start().line);
             }
@@ -158,27 +193,27 @@ impl<'a> Builder<'a> {
         Ok(out)
     }
 
-    fn item(&mut self, item: &Item) -> Result<String> {
-        let text = self.text(item);
+    fn item(&mut self, item: &Item, tokens: &TokenStream) -> Result<String> {
+        let text = self.text(tokens);
         let view = match item {
             Item::Use(_) | Item::BroadcastUse(_) => Some(text),
             Item::Fn(f) => {
-                let view = self.interface(&f.attrs, &f.sig, range(&f.vis), &f.block, f.semi_token.is_some(), &text, item);
-                self.add(f.sig.ident.to_string(), fn_kind(&f.sig), item, text, Some(view))?
+                let view = self.interface(&f.attrs, &f.sig, range(&f.vis), &f.block, f.semi_token.is_some(), tokens);
+                self.add(f.sig.ident.to_string(), fn_kind(&f.sig), tokens, text, Some(view))?
             }
-            Item::Struct(i) => self.add(i.ident.to_string(), "struct", item, text, None)?,
-            Item::Enum(i) => self.add(i.ident.to_string(), "enum", item, text, None)?,
-            Item::Const(i) => self.add(i.ident.to_string(), "const", item, text, None)?,
-            Item::Type(i) => self.add(i.ident.to_string(), "type", item, text, None)?,
-            Item::Trait(i) => self.add(i.ident.to_string(), "trait", item, text, None)?,
-            Item::Impl(i) => self.impl_block(i, item, text)?,
+            Item::Struct(i) => self.add(i.ident.to_string(), "struct", tokens, text, None)?,
+            Item::Enum(i) => self.add(i.ident.to_string(), "enum", tokens, text, None)?,
+            Item::Const(i) => self.add(i.ident.to_string(), "const", tokens, text, None)?,
+            Item::Type(i) => self.add(i.ident.to_string(), "type", tokens, text, None)?,
+            Item::Trait(i) => self.add(i.ident.to_string(), "trait", tokens, text, None)?,
+            Item::Impl(i) => self.impl_block(i, tokens, text)?,
             _ if self.file == File::Task => None,
             _ => bail!("line {}: unsupported kind of item", item.span().start().line),
         };
         Ok(view.map_or(String::new(), |v| format!("{v}\n\n")))
     }
 
-    fn impl_block(&mut self, i: &verus_syn::ItemImpl, item: &Item, text: String) -> Result<Option<String>> {
+    fn impl_block(&mut self, i: &verus_syn::ItemImpl, tokens: &TokenStream, text: String) -> Result<Option<String>> {
         // `Stack<T>` is indexed as `Stack`.
         let ty = match &*i.self_ty {
             verus_syn::Type::Path(p) => p.path.segments.last().context("impl type")?.ident.to_string(),
@@ -186,22 +221,23 @@ impl<'a> Builder<'a> {
         };
         if let Some((_, path, _)) = &i.trait_ {
             let name = format!("impl {} for {ty}", path.segments.last().context("impl trait")?.ident);
-            return self.add(name, "impl", item, text, None);
+            return self.add(name, "impl", tokens, text, None);
         }
         let mut methods = vec![];
-        for member in &i.items {
-            let text = self.text(member);
+        let Some(TokenTree::Group(body)) = tokens.clone().into_iter().last() else { bail!("impl without a body") };
+        for (member, tokens) in &split::<ImplItem>(body.stream())?.items {
+            let text = self.text(tokens);
             let added = match member {
                 ImplItem::Fn(f) => {
-                    let view = self.interface(&f.attrs, &f.sig, range(&f.vis), &f.block, f.semi_token.is_some(), &text, member);
-                    self.add(format!("{ty}::{}", f.sig.ident), fn_kind(&f.sig), member, text, Some(view))?
+                    let view = self.interface(&f.attrs, &f.sig, range(&f.vis), &f.block, f.semi_token.is_some(), tokens);
+                    self.add(format!("{ty}::{}", f.sig.ident), fn_kind(&f.sig), tokens, text, Some(view))?
                 }
-                ImplItem::Const(c) => self.add(format!("{ty}::{}", c.ident), "const", member, text, None)?,
+                ImplItem::Const(c) => self.add(format!("{ty}::{}", c.ident), "const", tokens, text, None)?,
                 _ => bail!("line {}: unsupported kind of impl item", member.span().start().line),
             };
             methods.extend(added);
         }
-        let header = &self.source[range(item).start..i.brace_token.span.open().byte_range().start];
+        let header = &self.source[range(tokens).start..i.brace_token.span.open().byte_range().start];
         Ok((!methods.is_empty()).then(|| format!("{header}{{\n{}\n}}", methods.join("\n\n"))))
     }
 
@@ -242,7 +278,6 @@ impl<'a> Builder<'a> {
     }
 
     /// The function with its body replaced, ready to be verified in the stubs.
-    #[allow(clippy::too_many_arguments)]
     fn interface(
         &self,
         attrs: &[verus_syn::Attribute],
@@ -250,11 +285,10 @@ impl<'a> Builder<'a> {
         vis: Range<usize>,
         block: &verus_syn::Block,
         bodiless: bool,
-        text: &str,
-        node: &impl ToTokens,
+        tokens: &TokenStream,
     ) -> String {
         if bodiless {
-            return text.to_string();
+            return self.text(tokens);
         }
         let docs = attrs.iter().filter(|a| a.path().is_ident("doc")).map(|a| self.text(a) + "\n").collect::<String>();
         let vis = match &self.source[vis] {
@@ -262,7 +296,7 @@ impl<'a> Builder<'a> {
             v => format!("{v} "),
         };
         // Everything after the publish modifier and before the body, minus `decreases`.
-        let after_attrs = attrs.iter().map(|a| range(a).end).max().unwrap_or(range(node).start);
+        let after_attrs = attrs.iter().map(|a| range(a).end).max().unwrap_or(range(tokens).start);
         let start = after_attrs.max(range(&sig.publish).end).max(sig_start(sig));
         let end = block.brace_token.span.open().byte_range().start;
         let rest = match &sig.spec.decreases {
@@ -287,7 +321,8 @@ impl<'a> Builder<'a> {
 fn sig_start(sig: &verus_syn::Signature) -> usize {
     let mut sig = sig.clone();
     sig.publish = Publish::Default;
-    range(&sig).start
+    let start = range(&sig).start;
+    sig.broadcast.map_or(start, |b| start.min(b.span.byte_range().start))
 }
 
 fn fn_kind(sig: &verus_syn::Signature) -> &'static str {
@@ -352,7 +387,7 @@ impl T { spec fn gone(self) -> bool { true } }
         for hidden in ["SECRET", "secret", "41", "hid", "gone", "struct T", "impl T", "> 7", "decreases", "opaque"] {
             assert!(!index.stubs.contains(hidden), "{hidden} in {}", index.stubs);
         }
-        for shown in ["/// Public doc.", "x > 0", "self.a > 1", "pub uninterp spec fn iface", "ensures x >= 1", "pub uninterp spec fn n"] {
+        for shown in ["/// Public doc.", "x > 0", "self.a > 1", "pub broadcast proof fn blemma", "pub uninterp spec fn iface", "ensures x >= 1", "pub uninterp spec fn n"] {
             assert!(index.stubs.contains(shown), "{shown} not in {}", index.stubs);
         }
         assert_eq!(index.hidden_names(), ["secret", "hid", "T", "gone"]);

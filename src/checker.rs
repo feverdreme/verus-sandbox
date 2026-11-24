@@ -2,10 +2,9 @@
 
 use crate::{
     config::Experiment,
-    source::{Index, idents, parse, verus_block},
+    source::{Index, Parsed, idents, parse, verus_block},
 };
 use proc_macro2::{Delimiter, Spacing, TokenStream, TokenTree};
-use quote::ToTokens;
 use std::collections::HashSet;
 use verus_syn::{Block, Expr, Item, Token, parse::Parser, punctuated::Punctuated};
 
@@ -217,27 +216,22 @@ impl<'a> Checker<'a> {
         self.reasons
     }
 
-    fn file(&mut self, task: &verus_syn::File, proposal: &verus_syn::File) {
-        if !self.same_attrs(&task.attrs, &proposal.attrs) || task.items.len() != proposal.items.len() {
+    fn file(&mut self, task: &Parsed<Item>, proposal: &Parsed<Item>) {
+        if !self.same(&task.attrs, &proposal.attrs) || task.items.len() != proposal.items.len() {
             self.reject("the code outside `verus!` was changed");
             return;
         }
-        for (old, new) in task.items.iter().zip(&proposal.items) {
-            match (verus_block(old), verus_block(new), old, new) {
-                (Some(Ok(a)), Some(Ok(b)), Item::Macro(old), Item::Macro(new)) => {
-                    let shell = |m: &verus_syn::ItemMacro| {
-                        let mut m = m.clone();
-                        m.mac.tokens = TokenStream::new();
-                        nodes(m.to_token_stream())
-                    };
-                    if !self.matches(&shell(old), &shell(new), None, &mut vec![]) || !self.same_attrs(&a.attrs, &b.attrs) {
+        for ((old, old_tokens), (new, new_tokens)) in task.items.iter().zip(&proposal.items) {
+            match (verus_block(old), verus_block(new)) {
+                (Some(Ok(a)), Some(Ok(b))) => {
+                    if !self.same(&shell(old_tokens), &shell(new_tokens)) || !self.same(&a.attrs, &b.attrs) {
                         self.reject("the `verus!` block itself was changed");
                     }
                     self.items(&a.items, &b.items);
                 }
-                (_, Some(Err(e)), ..) => self.reject(format!("the proposal does not parse: {e}")),
+                (_, Some(Err(e))) => self.reject(format!("the proposal does not parse: {e}")),
                 _ => {
-                    if !self.matches(&nodes(old.to_token_stream()), &nodes(new.to_token_stream()), None, &mut vec![]) {
+                    if !self.same(old_tokens, new_tokens) {
                         self.reject("the code outside `verus!` was changed");
                     }
                 }
@@ -245,17 +239,17 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn same_attrs(&mut self, a: &[verus_syn::Attribute], b: &[verus_syn::Attribute]) -> bool {
-        let tokens = |l: &[verus_syn::Attribute]| nodes(l.iter().map(|x| x.to_token_stream()).collect());
-        self.matches(&tokens(a), &tokens(b), None, &mut vec![])
+    fn same(&mut self, a: &TokenStream, b: &TokenStream) -> bool {
+        let mut fills = vec![];
+        self.matches(&nodes(a.clone()), &nodes(b.clone()), None, &mut fills) && fills.is_empty()
     }
 
     /// The original items must all appear, in order. Anything else must be a new function.
-    fn items(&mut self, old: &[Item], new: &[Item]) {
-        let old_nodes: Vec<Vec<Node>> = old.iter().map(|i| nodes(i.to_token_stream())).collect();
+    fn items(&mut self, old: &[(Item, TokenStream)], new: &[(Item, TokenStream)]) {
+        let old_nodes: Vec<Vec<Node>> = old.iter().map(|(_, t)| nodes(t.clone())).collect();
         let mut at = 0;
-        for item in new {
-            let item_nodes = nodes(item.to_token_stream());
+        for (item, tokens) in new {
+            let item_nodes = nodes(tokens.clone());
             let mut fills = vec![];
             // Skipping over an original item means it is missing.
             let found = (at..old.len()).find(|&i| {
@@ -263,7 +257,7 @@ impl<'a> Checker<'a> {
                 self.matches(&old_nodes[i], &item_nodes, None, &mut fills)
             });
             if let Some(found) = found {
-                (at..found).for_each(|i| self.missing(&old[i]));
+                (at..found).for_each(|i| self.missing(&old[i].1));
                 at = found + 1;
                 for fill in fills {
                     self.scan(&fill);
@@ -274,16 +268,17 @@ impl<'a> Checker<'a> {
             } else if let Item::Fn(f) = item {
                 self.added(f, &item_nodes);
             } else {
-                self.reject(format!("only functions may be added, and existing items may not change: {}", item_name(item)));
+                let name = item_name(tokens);
+                self.reject(format!("only functions may be added, and existing items may not change: {name}"));
             }
         }
-        old[at..].iter().for_each(|item| self.missing(item));
+        old[at..].iter().for_each(|(_, tokens)| self.missing(tokens));
         if self.steps > MAX_STEPS {
             self.reject("the proposal is too complex to compare with the task");
         }
     }
 
-    fn missing(&mut self, item: &Item) {
+    fn missing(&mut self, item: &TokenStream) {
         self.reject(format!("an existing item is missing or was changed outside its holes: {}", item_name(item)));
     }
 
@@ -400,9 +395,20 @@ fn count(node: &Node, text: &str) -> usize {
     }
 }
 
-fn item_name(item: &Item) -> String {
-    let text: Vec<String> = nodes(item.to_token_stream()).iter().take(6).map(|n| n.token().to_string()).collect();
+fn item_name(item: &TokenStream) -> String {
+    let text: Vec<String> = nodes(item.clone()).iter().take(6).map(|n| n.token().to_string()).collect();
     text.join(" ").chars().take(60).collect()
+}
+
+/// A `verus!` item with the contents of the block removed.
+fn shell(item: &TokenStream) -> TokenStream {
+    let empty = |t| match t {
+        TokenTree::Group(g) if g.delimiter() == Delimiter::Brace => {
+            TokenTree::Group(proc_macro2::Group::new(Delimiter::Brace, TokenStream::new()))
+        }
+        t => t,
+    };
+    item.clone().into_iter().map(empty).collect()
 }
 
 #[cfg(test)]
@@ -489,6 +495,7 @@ fn count(n: u64) -> (r: u64)
             ("ensures r == n,", ""),
             ("i = i + 1;", "i = n;"),
             ("decreases n - i,", ""),
+            ("proof fn p", "broadcast proof fn p"),
             ("proof fn p", "#[verifier::external_body] proof fn p"),
             ("spec fn even(x: int) -> bool { x % 2 == 0 }", ""),
             ("use crate::dependencies::*;", ""),
