@@ -45,6 +45,7 @@ impl Default for Limits {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct Experiment {
     pub config: Config,
     pub task: String,
