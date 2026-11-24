@@ -33,5 +33,9 @@ fn main() -> Result<ExitCode> {
         }
         _ => bail!("usage: vsb run <experiment_dir> [--agent claude|codex|api] [--model M]"),
     };
-    Ok(if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE })
+    Ok(if ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
 }
